@@ -1,5 +1,6 @@
 import sys
 import os
+import time as tm
 import os.path
 import tracelog as tr
 from shutil import copyfile
@@ -22,6 +23,7 @@ def main():
         
     # Load *.kth and distribute information inside
     if rank == 0:
+        exec_start = tm.time()
         filename = sys.argv[1]
         cleanname = os.path.split(filename)[1]
         path = os.path.split(filename)[0]
@@ -41,7 +43,7 @@ def main():
     tracedata, tracefile = tr.read_trace(data[1], rank)
     newfolder = data[2]
     trace = ParallelSyncedTrace(tracedata, rank, data[0], int(sys.argv[2]), 
-                                int(sys.argv[3]), False, False, comm)
+                                int(sys.argv[3]), True, True, comm)
     
     # Make an init time of the process with the lowest init time as reference
     # time for all events in all processes
@@ -62,6 +64,14 @@ def main():
     
     while not trace.is_pointer_at_end():
         trace.process_event()
+        
+    trace.finalize()
+    
+    data = 0
+    data = comm.gather(data, root=0)
+    if rank == 0:
+        execution_time = tm.time() - exec_start
+        print "Execution time: {0}".format(execution_time)
         
     trace.export_data(newfolder + "/" + os.path.split(tracefile)[1])
 

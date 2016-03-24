@@ -7,6 +7,9 @@ from tracelog import Trace
 from Queue import Queue
 from collections import OrderedDict
 from cStringIO import StringIO
+
+MAIN_COMMUNICATION = 1
+BA_COMMUNICATION = 2
       
 class ParallelSyncedTrace(Trace):
     
@@ -44,6 +47,7 @@ class ParallelSyncedTrace(Trace):
         self._last_receive_event_time = 0
         self._missing_receive_time_process_id = None
         self._is_backward_amortization = False
+        self._requests = Queue()
         
     def _clock_check(self, time, start_pointer, end_pointer=False, \
                      is_receive=False, sent_time=0):
@@ -136,6 +140,12 @@ class ParallelSyncedTrace(Trace):
         (self._last_event_time + self._minimal_event_diff) ):
             return
         
+        while not self._requests.empty():
+            time, request, target = self._requests.get()
+            received_time = request.wait()
+            self.refill_received_time(time, received_time, target)
+            
+        
         offset = new_time - origin_time
         linear_send_events = copy.deepcopy(self._send_events)
 
@@ -215,8 +225,14 @@ class ParallelSyncedTrace(Trace):
                     self._last_refilled_send_time = sent_time
                 break
     
+    
+    def finalize(self):
+        while not self._requests.empty():
+            self._requests.get()[1].wait()
+    
     def export_data(self, path):
         """ Returns synchronized data in a raw binary form. """
+        
         stream = StringIO()
         stream.write(self._header_info)
         for event in self._data_list:
@@ -297,10 +313,11 @@ class ParallelSyncedTrace(Trace):
         else:
             if origin_id is None:
                 raise Exception("Origin_id for a receive event not entered!")
-            req = self._communicator.irecv(source=origin_id, tag=self.process_id)
+            req = self._communicator.irecv(source=origin_id, tag=MAIN_COMMUNICATION)
             sent_time = req.wait()
             ctime = self._clock_check(time, pointer, False, True, sent_time)
-            #self._communicator.send(ctime, dest=origin_id, tag=origin_id)
+            if self._backward_amort:
+                self._communicator.isend(ctime, dest=origin_id, tag=BA_COMMUNICATION)
             self._last_received_sent_time = sent_time
             print "Progress ID{0}: {1}%".format(self.process_id, float(self.pointer) / float(len(self.data)) * 100)
             return ctime
@@ -313,8 +330,11 @@ class ParallelSyncedTrace(Trace):
             target_id -- message recipient
         """
 #         self._messages[self.process_id][target_id].put(self._data_list[-1])
-        self._communicator.isend(time, dest=target_id, tag=target_id)
-        #received_time = self._communicator.recv(source=target_id, tag=self.process_id)
+        self._communicator.isend(time, dest=target_id, tag=MAIN_COMMUNICATION)
+        if self._backward_amort:
+            self._requests.put((time, self._communicator.irecv(source=target_id, 
+                                                        tag=BA_COMMUNICATION),
+                                target_id))
         send_event = SendEvent()
         send_event.receiver = target_id
         if time not in self._send_events.keys():
