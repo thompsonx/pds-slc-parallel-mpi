@@ -43,7 +43,7 @@ def main():
     tracedata, tracefile = tr.read_trace(data[1], rank)
     newfolder = data[2]
     trace = ParallelSyncedTrace(tracedata, rank, data[0], int(sys.argv[2]), 
-                                int(sys.argv[3]), True, True, comm)
+                                int(sys.argv[3]), True, False, comm)
     
     # Make an init time of the process with the lowest init time as reference
     # time for all events in all processes
