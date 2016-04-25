@@ -308,19 +308,6 @@ class SyncedTrace(Trace):
         stream.close()
         return export
     
-    
-#     def set_init_time(self, increment):
-#         """ Increase initial time of a process by the increment value
-#         
-#             Arguments:
-#             increment -- an integer value which is added to the initial time        
-#         """
-#         origin = self.info["inittime"]
-#         newtime = str(int(origin) + increment)
-#         self.info["inittime"] = newtime
-#         self._header_info = self._header_info.replace(origin, newtime)
-        
-    
     def get_msg_sender(self):
         """ Returns None or the id of a process, who is the sender of the received
             message, if the next event is receive event

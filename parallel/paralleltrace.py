@@ -42,9 +42,7 @@ class ParallelSyncedTrace(Trace):
         self._last_event_time = 0
         self._send_events = OrderedDict()
         self._last_received_sent_time = 0
-        self._last_refilled_send_time = None
         self._last_receive_event_time = 0
-        self._missing_receive_time_process_id = None
         self._violating_recv_events = OrderedDict()
         self._requests = []
         
@@ -173,8 +171,6 @@ class ParallelSyncedTrace(Trace):
                 event.receive = received_time
                 event.offset = received_time - \
                     self._minimum_msg_delay - sent_time
-                if new_record:
-                    self._last_refilled_send_time = sent_time
                 break
         
     
@@ -191,12 +187,6 @@ class ParallelSyncedTrace(Trace):
         stream.close()
         with open(path, "wb") as f:
             f.write(export)
-    
-    
-    def get_missing_receive_time_process_id(self):
-        """ Returns id of a process whose time of a receive event was 
-        missing during the are_receive_times_refilled() method"""
-        return self._missing_receive_time_process_id
         
     
     def get_msg_sender(self):
@@ -256,7 +246,6 @@ class ParallelSyncedTrace(Trace):
             if self._backward_amort:
                 self._communicator.isend(ctime, dest=origin_id, tag=BA_COMMUNICATION)
             self._last_received_sent_time = sent_time
-            # print "Progress ID{0}: {1}%".format(self.process_id, float(self.pointer) / float(len(self.data)) * 100)
             return ctime
 
     def _extra_event_send(self, time, target_id):

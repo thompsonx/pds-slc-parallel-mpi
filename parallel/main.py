@@ -45,8 +45,7 @@ def main():
     trace = ParallelSyncedTrace(tracedata, rank, data[0], int(sys.argv[2]), 
                                 int(sys.argv[3]), True, True, comm)
     
-    # Make an init time of the process with the lowest init time as reference
-    # time for all events in all processes
+    # Sets common reference init time for all traces, the lowest one is chosen
     init_time = trace.get_init_time()
     data = init_time
     data = comm.gather(data, root=0)
