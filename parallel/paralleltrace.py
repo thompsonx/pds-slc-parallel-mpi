@@ -31,7 +31,6 @@ class ParallelSyncedTrace(Trace):
             communicator -- MPI communicator
         """
         Trace.__init__(self, data, process_id, pointer_size)
-        self._messenger = None
         self._messages = None
         self._minimal_event_diff = minimal_event_diff
         self._minimum_msg_delay = minimum_msg_delay
@@ -46,8 +45,8 @@ class ParallelSyncedTrace(Trace):
         self._last_refilled_send_time = None
         self._last_receive_event_time = 0
         self._missing_receive_time_process_id = None
-        self._is_backward_amortization = False
-        self._requests = Queue()
+        self._violating_recv_events = OrderedDict()
+        self._requests = []
         
     def _clock_check(self, time, start_pointer, end_pointer=False, \
                      is_receive=False, sent_time=0):
@@ -107,8 +106,6 @@ class ParallelSyncedTrace(Trace):
         
         if self._forward_amort:
             self._forward_amortization(time, newtime)
-        if self._backward_amort:
-            self._backward_amortization(time, newtime)
         
         self._last_event_time = newtime
         self._last_receive_event_time = newtime
@@ -129,82 +126,37 @@ class ParallelSyncedTrace(Trace):
             self.time_offset += (new_time - max([origin_time, \
             self._last_event_time + self._minimal_event_diff]))
     
-    def _backward_amortization(self, origin_time, new_time):
+    def do_backward_amortization(self):
         """ Applies the backward amortization 
-        
-            Arguments:
-            origin_time -- original timestamp of an receive event
-            new_time -- corrected/synchronized timestamp of the event
         """
-        if not ( new_time > origin_time and new_time > \
-        (self._last_event_time + self._minimal_event_diff) ):
-            return
         
-        while not self._requests.empty():
-            time, request, target = self._requests.get()
+        if not self._violating_recv_events.keys():
+            return
+
+        for r in self._requests:
+            time, request, target = r
             received_time = request.wait()
             self.refill_received_time(time, received_time, target)
-            
         
-        offset = new_time - origin_time
-        linear_send_events = copy.deepcopy(self._send_events)
-
         # Reduces collective messages into one
-        for t in linear_send_events.keys():
+        for t in self._send_events.keys():
             send_events = self._send_events[t]
             if len(send_events) > 1:
                 index = send_events.index(min([e.offset for e in send_events]))
-                linear_send_events[t] = send_events[index]
+                self._send_events[t] = send_events[index]
             else:
-                linear_send_events[t] = linear_send_events[t][0]
+                self._send_events[t] = send_events[0]
         
-        # Eliminates send events which break linear growth of the offsets
-        delete_events = Queue()
-        previous = SendEvent()
-        for time, event in linear_send_events.iteritems():
-            event.time = time
-            if previous.offset >= event.offset or previous.offset >= offset:
-                delete_events.put(previous.time)
-            previous = event
-        # Last event is not checked in the loop above, this checks it
-        if previous.offset >= offset:
-            delete_events.put(previous.time)
-        length = delete_events.qsize()
-        while length > 0:
-            linear_send_events.pop(delete_events.get(), None)
-            length -= 1
-        
-        # Repair times
-        last_event = self._data_list.pop()
-        send_event = [0]
-        local_offset = offset
-        # Is there any event that cannot be shifted by full amount of the offset
-        if linear_send_events:
-            send_event = linear_send_events.popitem(False)
-            local_offset = send_event[1].offset
-        new_send_events = OrderedDict()
-        for index, event in enumerate(self._data_list):
+        offset = self._violating_recv_events[self._violating_recv_events.keys()[-1]]
+        for event in self._data_list[ self._last_violating_recv_index - 1 : : -1 ]:
             if event[0] == "M":
-                tmp_time = event[1]
-                time = tmp_time + local_offset
-                event[1] = time
-                new_send_events[time] = []
-                for e in self._send_events[tmp_time]:
-                    e.offset -= local_offset
-                    new_send_events[time].append(e)
-                self._last_refilled_send_time = time
-                if tmp_time == send_event[0]:
-                    if linear_send_events:
-                        send_event = linear_send_events.popitem(False)
-                        local_offset = send_event[1].offset
-                    else:
-                        send_event = [0]
-                        local_offset = offset
-            else:
-                event[1] += local_offset
-
-        self._send_events = new_send_events
-        self._data_list.append(last_event)
+                max_offset = self._send_events[ event[1] ].offset
+                if max_offset < offset:
+                    offset = max_offset
+            tmp_time = event[1]
+            event[1] += offset
+            if event[0] == "R" and tmp_time in self._violating_recv_events.keys():
+                offset += self._violating_recv_events[ tmp_time ]
     
     def refill_received_time(self, sent_time, received_time, receiver, new_record=True):
         """ Backward amortization - adds receive time for a specific sent time 
@@ -224,11 +176,7 @@ class ParallelSyncedTrace(Trace):
                 if new_record:
                     self._last_refilled_send_time = sent_time
                 break
-    
-    
-    def finalize(self):
-        while not self._requests.empty():
-            self._requests.get()[1].wait()
+        
     
     def export_data(self, path):
         """ Returns synchronized data in a raw binary form. """
@@ -297,17 +245,6 @@ class ParallelSyncedTrace(Trace):
             receive -- mark True if you want to synchronize receive event
             origin_id -- if receive is True, specify id of the sender
         """
-#         if not receive:
-#             return self._clock_check(time, pointer)
-#         else:
-#             if origin_id is None:
-#                 raise Exception("Origin_id for a receive event not entered!")
-#             send_event = self._messages[origin_id][self.process_id].get()
-#             sent_time = send_event[1]
-#             self._receive_send_table[ len(self._data_list) - 1 ] = RSTableElement(send_event, origin_id)
-#             ctime = self._clock_check(time, pointer, False, True, sent_time)
-#             self._last_received_sent_time = sent_time
-#             return ctime
         if not receive:
             return self._clock_check(time, pointer)
         else:
@@ -319,7 +256,7 @@ class ParallelSyncedTrace(Trace):
             if self._backward_amort:
                 self._communicator.isend(ctime, dest=origin_id, tag=BA_COMMUNICATION)
             self._last_received_sent_time = sent_time
-            print "Progress ID{0}: {1}%".format(self.process_id, float(self.pointer) / float(len(self.data)) * 100)
+            # print "Progress ID{0}: {1}%".format(self.process_id, float(self.pointer) / float(len(self.data)) * 100)
             return ctime
 
     def _extra_event_send(self, time, target_id):
@@ -329,19 +266,33 @@ class ParallelSyncedTrace(Trace):
             time -- already synchronized time of the send event
             target_id -- message recipient
         """
-#         self._messages[self.process_id][target_id].put(self._data_list[-1])
         self._communicator.isend(time, dest=target_id, tag=MAIN_COMMUNICATION)
         if self._backward_amort:
-            self._requests.put((time, self._communicator.irecv(source=target_id, 
+            self._requests.append((time, self._communicator.irecv(source=target_id, 
                                                         tag=BA_COMMUNICATION),
                                 target_id))
+
         send_event = SendEvent()
         send_event.receiver = target_id
         if time not in self._send_events.keys():
             self._send_events[time] = [send_event]
         else:
             self._send_events[time].append(send_event)
-        #self.refill_received_time(time, received_time, target_id)
+
+        if self._backward_amort:
+            del_req = Queue()
+            for r in self._requests:
+                packet = r[1].test()
+                if packet[0]:
+                    time, request, target = r
+                    received_time = packet[1]
+                    self.refill_received_time(time, received_time, target)
+                    del_req.put(r)
+                else:
+                    break
+            while not del_req.empty():
+                r = del_req.get()
+                self._requests.remove(r)
     
     def _extra_event(self, event):
         """ Stores event symbol into trace's data """
