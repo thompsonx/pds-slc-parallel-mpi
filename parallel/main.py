@@ -52,14 +52,11 @@ def main():
     
     if rank == 0:
         starttime = min(data)
-        offsets = []
-        for time in data:
-            offsets.append(time - starttime)
     else:
-        offsets = None
+        starttime = None
     
-    data = comm.scatter(offsets, root=0)
-    trace.time_offset = data
+    starttime = comm.bcast(starttime, root=0)
+    trace.time_offset = init_time - starttime
     
     while not trace.is_pointer_at_end():
         trace.process_event()
