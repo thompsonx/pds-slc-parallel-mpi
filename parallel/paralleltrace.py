@@ -104,6 +104,10 @@ class ParallelSyncedTrace(Trace):
         
         if self._forward_amort:
             self._forward_amortization(time, newtime)
+        if self._backward_amort:
+            if newtime > time:
+                self._violating_recv_events[newtime] = newtime - time
+                self._last_violating_recv_index = len(self._data_list) - 1
         
         self._last_event_time = newtime
         self._last_receive_event_time = newtime
@@ -119,10 +123,8 @@ class ParallelSyncedTrace(Trace):
             origin_time -- original timestamp of an receive event
             new_time -- corrected/synchronized timestamp of the event
         """
-        if new_time > origin_time and new_time > \
-        (self._last_event_time + self._minimal_event_diff):
-            self.time_offset += (new_time - max([origin_time, \
-            self._last_event_time + self._minimal_event_diff]))
+        if new_time > origin_time:
+            self.time_offset += new_time - origin_time
     
     def do_backward_amortization(self):
         """ Applies the backward amortization 
