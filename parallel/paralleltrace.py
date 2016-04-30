@@ -129,14 +129,14 @@ class ParallelSyncedTrace(Trace):
     def do_backward_amortization(self):
         """ Applies the backward amortization 
         """
-        
-        if not self._violating_recv_events.keys():
-            return
 
         for r in self._requests:
             time, request, target = r
             received_time = request.wait()
             self.refill_received_time(time, received_time, target)
+
+        if not self._violating_recv_events.keys():
+            return
         
         # Reduces collective messages into one
         for t in self._send_events.keys():
